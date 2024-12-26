@@ -18,9 +18,8 @@ import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
@@ -98,7 +97,7 @@ public class OrderService {
     }
 
     // Function to get order listing
-    public Flux<OrderWithDetailsDTO> getOrderListing(String username, String status, Long orderId) {
+    public Mono<Map<String, Object>> getOrderListing(String username, String status, Long orderId) {
         StringBuilder query = new StringBuilder("""
         SELECT 
             o.id AS order_id,
@@ -114,25 +113,41 @@ public class OrderService {
         WHERE o.created_by = :username
     """);
 
+        StringBuilder countQuery = new StringBuilder("""
+        SELECT COUNT(DISTINCT o.id) AS total_count
+        FROM orders o
+        LEFT JOIN order_details od ON o.id = od.order_id
+        WHERE o.created_by = :username
+    """);
+
         // Conditionally filter
         if (orderId != null) {
             query.append(" AND o.id = :order_id");
+            countQuery.append(" AND o.id = :order_id");
         }
         if (status != null && !status.isEmpty()) {
             query.append(" AND o.order_status = :status");
+            countQuery.append(" AND o.order_status = :status");
         }
 
         DatabaseClient.GenericExecuteSpec spec = databaseClient.sql(query.toString())
                 .bind("username", username);
+        DatabaseClient.GenericExecuteSpec countSpec = databaseClient.sql(countQuery.toString())
+                .bind("username", username);
 
-        // Bind if it's provided
+        // Bind parameters
         if (orderId != null) {
             spec = spec.bind("order_id", orderId);
+            countSpec = countSpec.bind("order_id", orderId);
         }
         if (status != null && !status.isEmpty()) {
             spec = spec.bind("status", status);
+            countSpec = countSpec.bind("status", status);
         }
-        return spec.map((row, meta) -> {
+
+        Mono<Long> totalCount = countSpec.map((row, meta) -> row.get("total_count", Long.class)).one();
+
+        Flux<OrderWithDetailsDTO> orders = spec.map((row, meta) -> {
             OrderWithDetailsDTO order = new OrderWithDetailsDTO();
             order.setId(row.get("order_id", Long.class));
             order.setOrderNo(row.get("order_no", String.class));
@@ -149,15 +164,19 @@ public class OrderService {
                         .name(row.get("item_name", String.class))
                         .price(row.get("price", Float.class)) // Ensure price is handled gracefully
                         .build();
-
                 order.setOrderDetails(Collections.singletonList(item));
             } else {
-                // Set empty list if no details found
                 order.setOrderDetails(Collections.emptyList());
             }
-
             return order;
         }).all();
+
+        return totalCount.zipWith(orders.collectList(), (count, orderList) -> {
+            Map<String, Object> result = new HashMap<>();
+            result.put("totalCount", count);
+            result.put("orders", orderList);
+            return result;
+        });
     }
 
     // Function to update order status
@@ -169,11 +188,28 @@ public class OrderService {
     }
 
     // Function to delete the order items
-    public Mono<String> removeOrderItems(Long orderDetailId) {
-        return orderDetailRepository.findById(orderDetailId)
-                .flatMap(orderDetails -> orderDetailRepository.deleteById(orderDetailId)
-                       .then(Mono.just("Deleted successfully")))
-                .switchIfEmpty(Mono.error(new IllegalArgumentException("OrderDetail not found with id: " + orderDetailId)));
+    public Mono<String> removeOrderItems(String orderDetailIds) {
+        // Parse IDs
+        List<Long> ids = Arrays.stream(orderDetailIds.split(","))
+                .map(String::trim)
+                .map(Long::valueOf)
+                .toList();
+
+        return Flux.fromIterable(ids)
+                .flatMap(orderDetailId ->
+                        orderDetailRepository.findById(orderDetailId)
+                                .flatMap(orderDetails -> {
+                                    return orderDetailRepository.deleteById(orderDetailId)
+                                            .doOnSuccess(unused -> System.out.println("Deleted orderDetailId: " + orderDetailId));
+                                })
+                                .switchIfEmpty(Mono.defer(() -> {
+                                    return Mono.error(new IllegalArgumentException("OrderDetail not found with id: " + orderDetailId));
+                                }))
+                                .onErrorResume(e -> {
+                                    return Mono.empty(); // Continue with other IDs
+                                })
+                )
+                .then(Mono.just("All specified items processed successfully."));
     }
 
 

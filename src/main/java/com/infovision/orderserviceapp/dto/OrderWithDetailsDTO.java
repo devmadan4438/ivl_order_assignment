@@ -23,6 +23,7 @@ public class OrderWithDetailsDTO {
     private LocalDateTime createdOn;
     private String updatedBy;
 
+    private int orderItemCount;
     private List<Item> orderDetails = new ArrayList<>();
 
 

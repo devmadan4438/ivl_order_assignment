@@ -1,14 +1,14 @@
 package com.infovision.orderserviceapp.controllers;
 
 import com.infovision.orderserviceapp.dto.CreateOrderDTO;
-import com.infovision.orderserviceapp.dto.OrderWithDetailsDTO;
 import com.infovision.orderserviceapp.entities.Order;
 import com.infovision.orderserviceapp.services.OrderService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/order")
@@ -27,7 +27,7 @@ public class OrderController {
     }
 
     @GetMapping("/{username}")
-    public Flux<OrderWithDetailsDTO> getAllOrders(
+    public Mono<Map<String, Object>> getAllOrders(
             @PathVariable String username,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) Long orderId) {
@@ -39,8 +39,8 @@ public class OrderController {
         return orderService.updateStatus(orderId,status);
     }
 
-    @DeleteMapping("/{orderDetailId}")
-    public Mono<String> removeOrderItems(@PathVariable Long orderDetailId) {
-        return orderService.removeOrderItems(orderDetailId);
+    @DeleteMapping("/{orderDetailIds}")
+    public Mono<String> removeOrderItems(@PathVariable String orderDetailIds) {
+        return orderService.removeOrderItems(orderDetailIds);
     }
 }
